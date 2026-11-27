@@ -1,12 +1,10 @@
-print("pyscript.net is UP: Hosted on 'https://xxcoolgamerx2022x.github.io/pyboring/' (all rights reserved)\nentering catch(main())")
+print("pyscript.net is UP: Hosted on 'https://xxcoolgamerx2022x.github.io/pyboring/' (all rights reserved)")
+print("Type commands in the terminal below.")
 
-def catch_exit(e):
-  print(f"Main returned with {e}")
-  print("Entering lockup loop...")
-  while True: pass
-
-def main():
-  while True:
-    command = input("-$")
-
-catch_exit(main())
+while True:
+    try:
+        command = input("-$")
+        print("received:", command)
+    except EOFError:
+        print("Terminal input is unavailable. Reload the page and keep this tab in focus.")
+        break
