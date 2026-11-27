@@ -174,28 +174,39 @@ running = True
 # boot sequence
 # ============================================================
 
+
 def boot():
-    print("SeaBIOS (version 1.16.3)")
-    print("Machine UUID 00000000-0000-0000-0000-000000000000")
+    # IBM PC-compatible BIOS
+    print("IBM PC BIOS")
     print()
-    print("Booting from Hard Disk...")
+    print("640 KB RAM")
+    print("Keyboard initialized")
+    print("Video adapter initialized")
+    print("Floppy disk controller initialized")
+    print("Hard disk controller initialized")
     print()
+    print("Booting from hard disk...")
+    print()
+
+    # ELKS boot sector
     print("ELKS bootloader")
-    print("Loading kernel...")
+    print("Searching root filesystem...")
+    print("Found /Linux")
+    print("Loading kernel:")
+
+    # Bootloader disk-read progress
+    print("." * 32)
+    print()
+
+    # ELKS setup / kernel handoff
+    print("Starting ELKS kernel...")
     print()
     print("ELKS 0.9.2")
-    print("16-bit x86 kernel")
     print()
-    print("Initializing memory...")
-    print("Initializing kernel...")
-    print("Initializing process management...")
-    print("Initializing filesystem...")
-    print("Initializing device drivers...")
-    print()
+
+    # Root filesystem and userspace
     print("Mounting root filesystem...")
-    print("Starting init...")
-    print()
-    print("ELKS system ready.")
+    print("Running /etc/rc.sys")
     print()
 
 
