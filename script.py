@@ -361,13 +361,16 @@ def run_command(command_line):
 
 
 async def main():
-    """Run the terminal loop with PyScript's asynchronous worker input."""
+    """Run the terminal loop with synchronous or awaitable PyScript input."""
     while True:
         try:
-            # In a PyScript worker, input() returns a PyodideFuture. Await it
-            # before using the entered text or the loop will print that object
-            # and immediately request input again.
-            command = await input("web $ ")
+            # PyScript/Pyodide versions differ: terminal input may be returned
+            # directly as text or as an awaitable. Only await the latter.
+            pending_command = input("web $ ")
+            if hasattr(pending_command, "__await__"):
+                command = await pending_command
+            else:
+                command = pending_command
             if not run_command(command):
                 break
         except EOFError:
