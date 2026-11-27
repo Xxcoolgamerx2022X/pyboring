@@ -1,1048 +1,462 @@
 
 import sys
-import time
+import os
 import shlex
-import random
-import datetime
-from collections import deque
-
-# ============================================================
-# ELKS 0.9.2 - PYTHON SIMULATION
-# 8086 / 8088 PC environment
-# ============================================================
-
-VERSION = "0.9.2"
-KERNEL_VERSION = "0.9.2"
-HOSTNAME = "elks"
-ARCH = "i8086"
-
-RAM = 640 * 1024
-HEAP_SIZE = 5246
-
-RESET = "\033[0m"
-GREEN = "\033[32m"
-RED = "\033[31m"
-BLUE = "\033[34m"
-CYAN = "\033[36m"
-YELLOW = "\033[33m"
-GRAY = "\033[90m"
-BOLD = "\033[1m"
-
-# ============================================================
-# TERMINAL
-# ============================================================
-
-def sleep(seconds=0.05):
-    time.sleep(seconds)
-
-
-def clear():
-    print("\033[2J\033[H", end="")
-
-
-def message(text):
-    print(text)
+import asyncio
+from datetime import datetime
+from js import document
+from pyodide.ffi import create_proxy
 
 
 # ============================================================
-# VIRTUAL FILESYSTEM
+# terminal output
 # ============================================================
 
-class FileSystem:
+terminal = document.getElementById("terminal")
+command_input = document.getElementById("command")
 
+
+class TerminalWriter:
+    def write(self, text):
+        if not text:
+            return 0
+
+        terminal.textContent += str(text)
+        terminal.scrollTop = terminal.scrollHeight
+        return len(text)
+
+    def flush(self):
+        pass
+
+    def isatty(self):
+        return True
+
+
+sys.stdout = TerminalWriter()
+sys.stderr = TerminalWriter()
+
+
+def clear_screen():
+    terminal.textContent = ""
+
+
+# ============================================================
+# virtual filesystem
+# ============================================================
+
+class File:
+    def __init__(self, content=""):
+        self.content = content
+
+
+class Directory:
     def __init__(self):
-        self.dirs = {"/"}
-        self.files = {}
-        self.mounts = {
-            "/": "/dev/fd0"
-        }
+        self.entries = {}
 
-        directories = [
-            "/bin",
-            "/dev",
-            "/etc",
-            "/home",
-            "/lib",
-            "/mnt",
-            "/proc",
-            "/root",
-            "/tmp",
-            "/usr",
-            "/var",
-            "/var/log",
-            "/boot"
-        ]
 
-        for path in directories:
-            self.mkdir(path)
+root = Directory()
+cwd = "/"
 
-        self.write("/Linux", "ELKS KERNEL IMAGE")
-        self.write("/bootopts", "# ELKS boot options\n")
-        self.write("/etc/hostname", "elks\n")
+def get_path(path):
+    if not path:
+        return cwd
 
-        self.write("/etc/issue",
-            "ELKS 0.9.2 \\n \\l\n"
-        )
-
-        self.write("/etc/motd",
-            "Welcome to ELKS.\n"
-            "Embeddable Linux Kernel Subset.\n"
-        )
-
-        self.write("/etc/passwd",
-            "root:x:0:0:root:/root:/bin/sh\n"
-            "toor:x:0:0:root:/root:/bin/sash\n"
-        )
-
-        self.write("/etc/inittab",
-            "id:1:initdefault:\n"
-            "c1:15:respawn:/bin/getty /dev/tty1\n"
-        )
-
-        self.write("/etc/profile",
-            "PATH=/bin:/usr/bin:/sbin\n"
-            "HOME=/root\n"
-            "TERM=ansi\n"
-        )
-
-        self.write("/etc/rc.sys",
-            "#!/bin/sh\n"
-            "echo Starting system initialization\n"
-            "mount -a\n"
-        )
-
-        self.write("/etc/mount.cfg", "")
-        self.write("/etc/net.cfg", "")
-        self.write("/var/log/messages", "")
-
-        commands = [
-            "ash", "sh", "sash", "init", "getty",
-            "login", "ls", "cat", "echo", "pwd",
-            "cd", "mkdir", "rmdir", "rm", "cp",
-            "mv", "touch", "more", "grep", "mount",
-            "umount", "sync", "reboot", "shutdown",
-            "ps", "meminfo", "uname", "date",
-            "df", "du", "free", "printenv", "env",
-            "hostname", "whoami", "id", "kill",
-            "sleep", "true", "false", "which",
-            "find", "head", "tail", "wc", "sort",
-            "init", "mount", "net", "netstat",
-            "arp", "telnet", "ftp", "ping",
-            "ifconfig", "fdisk", "mkfs", "mkfat",
-            "sys", "man", "vi", "kilo", "chmem",
-            "tty", "time", "hd", "uname", "dmesg"
-        ]
-
-        for command in commands:
-            self.write("/bin/" + command, "[ELKS executable]")
-
-        for device in [
-            "console", "tty1", "tty2", "tty3",
-            "ttyS0", "ttyS1", "ttyS2", "ttyS3",
-            "fd0", "fd1", "hda", "hda1",
-            "hda2", "hdb", "hdb1", "hdc",
-            "rd0", "rd1", "ssd", "null",
-            "zero", "mem", "port"
-        ]:
-            self.write("/dev/" + device, "")
-
-    def normalize(self, path, cwd="/"):
-        if not path:
-            return cwd
-
-        if not path.startswith("/"):
-            path = cwd.rstrip("/") + "/" + path
-
+    if path.startswith("/"):
         parts = []
+    else:
+        parts = [p for p in cwd.split("/") if p]
 
-        for part in path.split("/"):
-            if part in ("", "."):
-                continue
+    for part in path.split("/"):
+        if part in ("", "."):
+            continue
+        elif part == "..":
+            if parts:
+                parts.pop()
+        else:
+            parts.append(part)
 
-            if part == "..":
-                if parts:
-                    parts.pop()
-            else:
-                parts.append(part)
+    return "/" + "/".join(parts)
 
-        return "/" + "/".join(parts)
 
-    def exists(self, path):
-        return path in self.dirs or path in self.files
+def resolve(path):
+    path = get_path(path)
 
-    def mkdir(self, path):
-        path = self.normalize(path)
-        parent = path.rsplit("/", 1)[0] or "/"
+    if path == "/":
+        return root
 
-        if parent not in self.dirs:
-            return False
+    current = root
 
-        if self.exists(path):
-            return False
-
-        self.dirs.add(path)
-        return True
-
-    def write(self, path, data):
-        path = self.normalize(path)
-        parent = path.rsplit("/", 1)[0] or "/"
-
-        if parent not in self.dirs or path in self.dirs:
-            return False
-
-        self.files[path] = str(data)
-        return True
-
-    def read(self, path):
-        return self.files.get(self.normalize(path))
-
-    def remove(self, path):
-        path = self.normalize(path)
-
-        if path in self.files:
-            del self.files[path]
-            return True
-
-        if path in self.dirs and path != "/":
-            prefix = path.rstrip("/") + "/"
-
-            for item in self.files.keys() | self.dirs:
-                if item.startswith(prefix):
-                    return False
-
-            self.dirs.remove(path)
-            return True
-
-        return False
-
-    def listdir(self, path):
-        path = self.normalize(path)
-
-        if path not in self.dirs:
+    for part in path.strip("/").split("/"):
+        if not isinstance(current, Directory):
             return None
 
-        result = []
+        current = current.entries.get(part)
 
-        for item in self.dirs | self.files.keys():
-            if item == "/":
-                continue
+        if current is None:
+            return None
 
-            parent = item.rsplit("/", 1)[0] or "/"
-
-            if parent == path:
-                result.append(item.rsplit("/", 1)[-1])
-
-        return sorted(set(result))
-
-    def copy(self, src, dst):
-        data = self.read(src)
-
-        if data is None:
-            return False
-
-        return self.write(dst, data)
-
-    def move(self, src, dst):
-        src = self.normalize(src)
-        dst = self.normalize(dst)
-
-        if src not in self.files:
-            return False
-
-        if not self.write(dst, self.files[src]):
-            return False
-
-        del self.files[src]
-        return True
+    return current
 
 
-# ============================================================
-# ELKS KERNEL
-# ============================================================
+def parent_directory(path):
+    path = get_path(path)
+    parent = os.path.dirname(path)
+    name = os.path.basename(path)
 
-class Kernel:
+    if not parent:
+        parent = "/"
 
-    def __init__(self):
-        self.logs = deque(maxlen=500)
-        self.processes = []
-        self.pid = 1
+    return resolve(parent), name
 
-        self.runlevel = 1
-        self.boot_time = time.monotonic()
 
-        self.memory_total = RAM
-        self.memory_used = 176 * 1024
+def make_directory(path):
+    parent, name = parent_directory(path)
 
-        self.heap_used = HEAP_SIZE
+    if not isinstance(parent, Directory):
+        return False
 
-        self.hostname = HOSTNAME
-        self.root_device = "/dev/fd0"
-        self.filesystem = "Minix V1"
+    if name in parent.entries:
+        return False
 
-    def log(self, text):
-        elapsed = time.monotonic() - self.boot_time
+    parent.entries[name] = Directory()
+    return True
 
-        line = f"[{elapsed:6.2f}] {text}"
-        self.logs.append(line)
 
-        print(line)
+def make_file(path, content=""):
+    parent, name = parent_directory(path)
 
-    def add_process(self, name, user="root", tty="", state="S"):
-        self.processes.append({
-            "pid": self.pid,
-            "grp": self.pid,
-            "tty": tty,
-            "user": user,
-            "state": state,
-            "cpu": random.randint(0, 3),
-            "heap": random.randint(0, 2048),
-            "free": random.randint(1000, 4000),
-            "size": random.randint(8000, 16000),
-            "name": name
-        })
+    if not isinstance(parent, Directory):
+        return False
 
-        self.pid += 1
+    parent.entries[name] = File(content)
+    return True
 
-    def boot(self):
 
-        self.boot_time = time.monotonic()
+def seed_filesystem():
+    make_directory("/bin")
+    make_directory("/dev")
+    make_directory("/etc")
+    make_directory("/home")
+    make_directory("/home/root")
+    make_directory("/proc")
+    make_directory("/tmp")
+    make_directory("/var")
+    make_directory("/var/log")
 
-        # ----------------------------------------------------
-        # BIOS
-        # ----------------------------------------------------
+    make_file("/etc/hostname", "elks")
+    make_file("/etc/issue", "ELKS 0.9.2")
+    make_file("/etc/os-release",
+              "NAME=ELKS\nVERSION=0.9.2\n")
+    make_file("/var/log/boot.log", "ELKS boot log\n")
+    make_file("/home/root/readme.txt",
+              "Welcome to ELKS.\n")
 
-        print(CYAN + BOLD + "SeaBIOS (version rel-1.16.3)" + RESET)
-        print("Machine UUID 00000000-0000-0000-0000-000000000000")
-        print("iPXE (http://ipxe.org)")
 
-        sleep()
-
-        print("Booting from Hard Disk...")
-        sleep()
-
-        # ----------------------------------------------------
-        # BOOTLOADER
-        # ----------------------------------------------------
-
-        print()
-        print("ELKS boot loader")
-
-        print("Loading /Linux", end=" ")
-
-        for _ in range(12):
-            print(".", end="", flush=True)
-            sleep(0.025)
-
-        print()
-        print("Loading boot options...")
-        sleep()
-
-        # ----------------------------------------------------
-        # KERNEL
-        # ----------------------------------------------------
-
-        print()
-        print("ELKS " + KERNEL_VERSION)
-        print("Copyright (C) ELKS contributors")
-        print()
-
-        self.log("ELKS kernel " + KERNEL_VERSION)
-        self.log("CPU: Intel 8086 compatible processor")
-        self.log("CPU: 16-bit real mode")
-        self.log("Memory: 640 KB conventional memory")
-        self.log("Memory: 655360 bytes available")
-        self.log("Initializing kernel heap")
-        self.log("Kernel heap initialized")
-        self.log("Initializing task table")
-        self.log("Initializing scheduler")
-        self.log("Initializing timer")
-        self.log("Initializing interrupt handlers")
-        self.log("Initializing console driver")
-        self.log("Console: tty1")
-        self.log("Initializing keyboard driver")
-        self.log("Keyboard: PC/XT compatible")
-        self.log("Initializing floppy disk driver")
-        self.log("fd0: 1.44 MB floppy disk")
-        self.log("Initializing hard disk driver")
-        self.log("hda: virtual hard disk")
-        self.log("Initializing block devices")
-        self.log("Initializing character devices")
-        self.log("Initializing TTY subsystem")
-        self.log("Initializing buffer cache")
-        self.log("Initializing filesystem subsystem")
-        self.log("VFS: root device " + self.root_device)
-        self.log("MINIX filesystem detected")
-        self.log("VFS: Mounted root filesystem")
-        self.log("Root filesystem mounted read-write")
-        self.log("Freeing unused kernel memory")
-
-        # ----------------------------------------------------
-        # INIT
-        # ----------------------------------------------------
-
-        print()
-
-        self.log("Starting /bin/init")
-        self.log("init: reading /etc/inittab")
-        self.log("init: default runlevel 1")
-        self.log("init: executing /etc/rc.sys")
-
-        self.log("rc.sys: system initialization complete")
-        self.log("init: starting console getty")
-
-        self.add_process("/bin/init 1")
-        self.add_process("/bin/getty /dev/tty1")
-
-        self.log("init: system ready")
-
-        print()
+seed_filesystem()
 
 
 # ============================================================
-# ELKS SHELL
+# kernel / system state
 # ============================================================
 
-class ELKS:
+hostname = "elks"
+username = "root"
+kernel_version = "0.9.2"
+system_time = datetime.now()
 
-    def __init__(self):
-        self.fs = FileSystem()
-        self.kernel = Kernel()
+uptime_seconds = 0
+command_history = []
 
-        self.user = "root"
-        self.uid = 0
+running = True
 
-        self.cwd = "/root"
-        self.shell = "/bin/sh"
 
-        self.env = {
-            "HOME": "/root",
-            "USER": "root",
-            "SHELL": "/bin/sh",
-            "PATH": "/bin:/usr/bin:/sbin",
-            "HOSTNAME": HOSTNAME,
-            "TERM": "ansi"
-        }
+# ============================================================
+# boot sequence
+# ============================================================
 
-        self.history = []
-        self.running = True
-        self.reboot_requested = False
+def boot():
+    print("SeaBIOS (version 1.16.3)")
+    print("Machine UUID 00000000-0000-0000-0000-000000000000")
+    print()
+    print("Booting from Hard Disk...")
+    print()
+    print("ELKS bootloader")
+    print("Loading kernel...")
+    print()
+    print("ELKS 0.9.2")
+    print("16-bit x86 kernel")
+    print()
+    print("Initializing memory...")
+    print("Initializing kernel...")
+    print("Initializing process management...")
+    print("Initializing filesystem...")
+    print("Initializing device drivers...")
+    print()
+    print("Mounting root filesystem...")
+    print("Starting init...")
+    print()
+    print("ELKS system ready.")
+    print()
 
-    def resolve(self, path):
-        return self.fs.normalize(path, self.cwd)
 
-    def error(self, text):
-        print(text)
+# ============================================================
+# shell commands
+# ============================================================
 
-    def prompt(self):
-        symbol = "#" if self.uid == 0 else "$"
+def cmd_help(args):
+    print("Available commands:")
+    print()
+    print("  help       show this help")
+    print("  clear      clear the terminal")
+    print("  ls         list directory contents")
+    print("  cd         change directory")
+    print("  pwd        print working directory")
+    print("  cat        display a file")
+    print("  mkdir      create a directory")
+    print("  touch      create an empty file")
+    print("  echo       display text")
+    print("  uname      system information")
+    print("  hostname   show hostname")
+    print("  whoami     show current user")
+    print("  date       display date")
+    print("  uptime     show uptime")
+    print("  free       memory information")
+    print("  ps         process list")
+    print("  dmesg      kernel messages")
+    print("  reboot     restart system")
+    print("  exit       close shell")
 
-        return (
-            CYAN + self.env["HOSTNAME"] +
-            RESET + symbol + " "
-        )
 
-    # ========================================================
-    # FILESYSTEM
-    # ========================================================
+def cmd_ls(args):
+    path = args[0] if args else cwd
+    target = resolve(path)
 
-    def cmd_ls(self, args):
-        path = self.resolve(args[0]) if args else self.cwd
+    if target is None:
+        print(f"ls: {path}: No such file or directory")
+        return
 
-        items = self.fs.listdir(path)
+    if isinstance(target, File):
+        print(os.path.basename(path))
+        return
 
-        if items is None:
-            self.error("ls: cannot access " + path)
-            return
+    for name, item in sorted(target.entries.items()):
+        suffix = "/" if isinstance(item, Directory) else ""
+        print(name + suffix)
 
-        for item in items:
-            full = self.resolve(path + "/" + item)
 
-            if full in self.fs.dirs:
-                print(BLUE + item + "/" + RESET, end="  ")
-            else:
-                print(item, end="  ")
+def cmd_cd(args):
+    global cwd
 
-        print()
+    path = args[0] if args else "/home/root"
+    target_path = get_path(path)
+    target = resolve(target_path)
 
-    def cmd_cd(self, args):
-        path = args[0] if args else self.env["HOME"]
-        target = self.resolve(path)
+    if target is None:
+        print(f"cd: {path}: No such file or directory")
+    elif not isinstance(target, Directory):
+        print(f"cd: {path}: Not a directory")
+    else:
+        cwd = target_path
 
-        if target not in self.fs.dirs:
-            self.error("cd: " + path + ": not a directory")
-            return
 
-        self.cwd = target
+def cmd_pwd(args):
+    print(cwd)
 
-    def cmd_pwd(self, args):
-        print(self.cwd)
 
-    def cmd_cat(self, args):
-        if not args:
-            self.error("cat: missing operand")
-            return
+def cmd_cat(args):
+    if not args:
+        print("cat: missing file operand")
+        return
 
-        for path in args:
-            data = self.fs.read(self.resolve(path))
+    for path in args:
+        target = resolve(path)
 
-            if data is None:
-                self.error("cat: " + path + ": No such file")
-            else:
-                print(data, end="")
-
-        print()
-
-    def cmd_touch(self, args):
-        for path in args:
-            target = self.resolve(path)
-
-            if not self.fs.exists(target):
-                if not self.fs.write(target, ""):
-                    self.error("touch: cannot create " + path)
-
-    def cmd_mkdir(self, args):
-        for path in args:
-            if not self.fs.mkdir(self.resolve(path)):
-                self.error("mkdir: cannot create " + path)
-
-    def cmd_rmdir(self, args):
-        for path in args:
-            if not self.fs.remove(self.resolve(path)):
-                self.error("rmdir: failed to remove " + path)
-
-    def cmd_rm(self, args):
-        for path in args:
-            if not self.fs.remove(self.resolve(path)):
-                self.error("rm: cannot remove " + path)
-
-    def cmd_cp(self, args):
-        if len(args) != 2:
-            self.error("usage: cp source destination")
-            return
-
-        if not self.fs.copy(
-            self.resolve(args[0]),
-            self.resolve(args[1])
-        ):
-            self.error("cp: failed")
-
-    def cmd_mv(self, args):
-        if len(args) != 2:
-            self.error("usage: mv source destination")
-            return
-
-        if not self.fs.move(
-            self.resolve(args[0]),
-            self.resolve(args[1])
-        ):
-            self.error("mv: failed")
-
-    def cmd_find(self, args):
-        root = self.resolve(args[0]) if args else self.cwd
-
-        if root not in self.fs.dirs:
-            self.error("find: invalid path")
-            return
-
-        def walk(path):
-            for item in self.fs.listdir(path) or []:
-                full = self.resolve(path + "/" + item)
-                print(full)
-
-                if full in self.fs.dirs:
-                    walk(full)
-
-        walk(root)
-
-    # ========================================================
-    # FILE UTILITIES
-    # ========================================================
-
-    def cmd_grep(self, args):
-        if len(args) < 2:
-            self.error("usage: grep pattern file")
-            return
-
-        pattern = args[0]
-        data = self.fs.read(self.resolve(args[1]))
-
-        if data is None:
-            self.error("grep: cannot open " + args[1])
-            return
-
-        for line in data.splitlines():
-            if pattern in line:
-                print(line)
-
-    def cmd_head(self, args):
-        if not args:
-            return
-
-        data = self.fs.read(self.resolve(args[0]))
-
-        if data is not None:
-            print("\n".join(data.splitlines()[:10]))
-
-    def cmd_tail(self, args):
-        if not args:
-            return
-
-        data = self.fs.read(self.resolve(args[0]))
-
-        if data is not None:
-            print("\n".join(data.splitlines()[-10:]))
-
-    def cmd_wc(self, args):
-        if not args:
-            return
-
-        data = self.fs.read(self.resolve(args[0]))
-
-        if data is not None:
-            lines = data.splitlines()
-            print(len(lines), len(data.split()), len(data), args[0])
-
-    def cmd_more(self, args):
-        self.cmd_cat(args)
-
-    def cmd_echo(self, args):
-        print(" ".join(args))
-
-    # ========================================================
-    # SYSTEM INFORMATION
-    # ========================================================
-
-    def cmd_uname(self, args):
-        if "-a" in args:
-            print(
-                f"ELKS {HOSTNAME} {VERSION} "
-                f"{ARCH} 8086"
-            )
+        if target is None:
+            print(f"cat: {path}: No such file or directory")
+        elif isinstance(target, Directory):
+            print(f"cat: {path}: Is a directory")
         else:
-            print("ELKS")
-
-    def cmd_hostname(self, args):
-        print(self.env["HOSTNAME"])
-
-    def cmd_whoami(self, args):
-        print(self.user)
-
-    def cmd_id(self, args):
-        print(f"uid={self.uid}({self.user})")
-
-    def cmd_date(self, args):
-        print(datetime.datetime.now().strftime(
-            "%a %b %d %H:%M:%S %Y"
-        ))
-
-    def cmd_printenv(self, args):
-        for key, value in self.env.items():
-            print(f"{key}={value}")
-
-    def cmd_meminfo(self, args):
-        used = self.kernel.memory_used
-        free = RAM - used
-
-        print("  HEAP   TYPE  SIZE")
-        print("  eb8a   SEG     12")
-        print("  eb9e   SEG     12")
-        print("  ec02   TTY    128")
-        print("  ec8a   TTY     64")
-        print("  ecd2   SEG     12")
-        print("  f102   TTY     64")
-        print()
-        print(f"Total heap   {self.kernel.heap_used}")
-        print(f"Total mem    {RAM}")
-        print(
-            f"Memory usage {RAM // 1024}KB total, "
-            f"{used // 1024}KB used, "
-            f"{free // 1024}KB free"
-        )
-
-    def cmd_ps(self, args):
-        print(
-            "  PID   GRP  TTY USER STAT CPU  "
-            "HEAP  FREE   SIZE COMMAND"
-        )
-
-        for p in self.kernel.processes:
-            print(
-                f"{p['pid']:5} "
-                f"{p['grp']:5} "
-                f"{p['tty']:4} "
-                f"{p['user']:<5} "
-                f"{p['state']:4} "
-                f"{p['cpu']:3} "
-                f"{p['heap']:5} "
-                f"{p['free']:5} "
-                f"{p['size']:6} "
-                f"{p['name']}"
-            )
-
-    def cmd_df(self, args):
-        print("Filesystem     Size  Used Avail Mounted on")
-        print("/dev/fd0       1.4M  620K  820K /")
-
-    def cmd_du(self, args):
-        print("Filesystem usage: simulated")
-
-    def cmd_free(self, args):
-        self.cmd_meminfo(args)
-
-    def cmd_tty(self, args):
-        print("/dev/tty1")
-
-    def cmd_dmesg(self, args):
-        for line in self.kernel.logs:
-            print(line)
-
-    # ========================================================
-    # PROCESS / SYSTEM MANAGEMENT
-    # ========================================================
-
-    def cmd_sync(self, args):
-        print("sync: buffers synchronized")
-
-    def cmd_reboot(self, args):
-        print("Rebooting system...")
-        self.running = False
-        self.reboot_requested = True
-
-    def cmd_shutdown(self, args):
-        print("System halted.")
-        self.running = False
-        self.reboot_requested = False
-
-    def cmd_sleep(self, args):
-        duration = float(args[0]) if args else 1
-        time.sleep(min(duration, 10))
-
-    def cmd_true(self, args):
-        pass
-
-    def cmd_false(self, args):
-        pass
-
-    def cmd_which(self, args):
-        if not args:
-            return
-
-        path = "/bin/" + args[0]
-
-        if self.fs.exists(path):
-            print(path)
-        else:
-            print(args[0] + ": not found")
-
-    # ========================================================
-    # FILESYSTEM MOUNTING
-    # ========================================================
-
-    def cmd_mount(self, args):
-        if not args:
-            for mount, device in self.fs.mounts.items():
-                print(f"{device} on {mount} type {self.kernel.filesystem}")
-            return
-
-        if len(args) < 2:
-            self.error("usage: mount device directory")
-            return
-
-        device = args[0]
-        target = self.resolve(args[1])
-
-        if target not in self.fs.dirs:
-            self.error("mount: mount point does not exist")
-            return
-
-        self.fs.mounts[target] = device
-        print(f"mount: {device} mounted on {target}")
-
-    def cmd_umount(self, args):
-        if not args:
-            self.error("usage: umount device")
-            return
-
-        device = args[0]
-
-        for mount, mounted_device in list(self.fs.mounts.items()):
-            if mounted_device == device:
-                if mount == "/":
-                    self.error("umount: cannot unmount root")
-                    return
-
-                del self.fs.mounts[mount]
-                print("umount: " + device + " unmounted")
-                return
-
-        self.error("umount: device not mounted")
-
-    # ========================================================
-    # INIT / RUNLEVELS
-    # ========================================================
-
-    def cmd_init(self, args):
-        if not args:
-            print("init: usage: init runlevel")
-            return
-
-        try:
-            level = int(args[0])
-        except ValueError:
-            self.error("init: invalid runlevel")
-            return
-
-        if level < 1 or level > 6:
-            self.error("init: invalid runlevel")
-            return
-
-        self.kernel.runlevel = level
-        print(f"init: switching to runlevel {level}")
-
-        if level == 1:
-            print("init: single-user console")
-        elif level == 2:
-            print("init: single-user serial")
-        elif level == 3:
-            print("init: multiuser console and serial")
-        elif level == 4:
-            print("init: multiuser serial")
-        elif level == 5:
-            print("init: multiuser console")
-        elif level == 6:
-            print("init: all consoles and serial ports")
-
-    # ========================================================
-    # NETWORKING
-    # ========================================================
-
-    def cmd_net(self, args):
-        if args and args[0] == "start":
-            print("Starting networking on ne0")
-            print("ktcp: network interface initialized")
-            print("ktcp: ip 10.0.2.15")
-            print("ktcp: gateway 10.0.2.2")
-            print("Starting daemons 'telnetd' 'ftpd -d'")
-        elif args and args[0] == "stop":
-            print("Stopping networking")
-        else:
-            print("usage: net start | stop")
-
-    def cmd_netstat(self, args):
-        print("Active Internet connections")
-        print("Proto Local Address Foreign Address State")
-        print("tcp   0.0.0.0:23    0.0.0.0:*       LISTEN")
-
-    def cmd_arp(self, args):
-        print("IP address       HW type     HW address")
-        print("10.0.2.2         ether       52:55:0a:00:02:02")
-
-    def cmd_ifconfig(self, args):
-        print("ne0: flags=UP,BROADCAST,RUNNING")
-        print("     inet 10.0.2.15")
-        print("     netmask 255.255.255.0")
-
-    # ========================================================
-    # PRIVILEGES
-    # ========================================================
-
-    def cmd_su(self, args):
-        self.user = "root"
-        self.uid = 0
-        self.env["USER"] = "root"
-        self.env["HOME"] = "/root"
-        self.cwd = "/root"
-
-    # ========================================================
-    # SHELL
-    # ========================================================
-
-    def cmd_help(self, args):
-        print("""
-ELKS shell
-
-Filesystem:
-  ls       cd       pwd      cat
-  mkdir    rmdir    rm       cp
-  mv       touch    find     grep
-  head     tail     more     wc
-
-System:
-  uname    hostname whoami   id
-  date     ps       meminfo  dmesg
-  df       du       mount    umount
-  sync     init     reboot   shutdown
-
-Network:
-  net      netstat  arp      ifconfig
-
-Shell:
-  echo     printenv env      which
-  sleep    true     false    help
-  su       exit
-""")
-
-    def cmd_export(self, args):
-        if not args or "=" not in args[0]:
-            self.error("usage: export NAME=value")
-            return
-
-        key, value = args[0].split("=", 1)
-        self.env[key] = value
-
-    def cmd_history(self, args):
-        for i, command in enumerate(self.history, 1):
-            print(f"{i:4} {command}")
-
-    def cmd_clear(self, args):
-        clear()
-
-    def cmd_exit(self, args):
-        self.running = False
-
-    # ========================================================
-    # COMMAND DISPATCH
-    # ========================================================
-
-    def execute(self, command):
-        command = command.strip()
-
-        if not command:
-            return
-
-        self.history.append(command)
-
-        try:
-            parts = shlex.split(command)
-        except ValueError as exc:
-            self.error(str(exc))
-            return
-
-        if not parts:
-            return
-
-        name = parts[0]
-        args = parts[1:]
-
-        commands = {
-            "ls": self.cmd_ls,
-            "cd": self.cmd_cd,
-            "pwd": self.cmd_pwd,
-            "cat": self.cmd_cat,
-            "touch": self.cmd_touch,
-            "mkdir": self.cmd_mkdir,
-            "rmdir": self.cmd_rmdir,
-            "rm": self.cmd_rm,
-            "cp": self.cmd_cp,
-            "mv": self.cmd_mv,
-            "find": self.cmd_find,
-            "grep": self.cmd_grep,
-            "head": self.cmd_head,
-            "tail": self.cmd_tail,
-            "wc": self.cmd_wc,
-            "more": self.cmd_more,
-            "echo": self.cmd_echo,
-            "uname": self.cmd_uname,
-            "hostname": self.cmd_hostname,
-            "whoami": self.cmd_whoami,
-            "id": self.cmd_id,
-            "date": self.cmd_date,
-            "printenv": self.cmd_printenv,
-            "env": self.cmd_printenv,
-            "meminfo": self.cmd_meminfo,
-            "free": self.cmd_free,
-            "ps": self.cmd_ps,
-            "df": self.cmd_df,
-            "du": self.cmd_du,
-            "tty": self.cmd_tty,
-            "dmesg": self.cmd_dmesg,
-            "sync": self.cmd_sync,
-            "reboot": self.cmd_reboot,
-            "shutdown": self.cmd_shutdown,
-            "sleep": self.cmd_sleep,
-            "true": self.cmd_true,
-            "false": self.cmd_false,
-            "which": self.cmd_which,
-            "mount": self.cmd_mount,
-            "umount": self.cmd_umount,
-            "init": self.cmd_init,
-            "net": self.cmd_net,
-            "netstat": self.cmd_netstat,
-            "arp": self.cmd_arp,
-            "ifconfig": self.cmd_ifconfig,
-            "su": self.cmd_su,
-            "help": self.cmd_help,
-            "export": self.cmd_export,
-            "history": self.cmd_history,
-            "clear": self.cmd_clear,
-            "exit": self.cmd_exit
-        }
-
-        if name in commands:
-            commands[name](args)
-            return
-
-        if self.fs.exists(self.resolve(name)):
-            print(name + ": cannot execute simulated binary")
-            return
-
-        self.error(name + ": command not found")
+            print(target.content, end="")
+
+
+def cmd_mkdir(args):
+    if not args:
+        print("mkdir: missing operand")
+        return
+
+    for path in args:
+        if not make_directory(path):
+            print(f"mkdir: cannot create directory '{path}'")
+
+
+def cmd_touch(args):
+    if not args:
+        print("touch: missing file operand")
+        return
+
+    for path in args:
+        if resolve(path) is None:
+            if not make_file(path):
+                print(f"touch: cannot create '{path}'")
+
+
+def cmd_echo(args):
+    print(" ".join(args))
+
+
+def cmd_uname(args):
+    if "-a" in args:
+        print(f"ELKS {hostname} 0.9.2 i8086")
+    elif "-r" in args:
+        print(kernel_version)
+    elif "-n" in args:
+        print(hostname)
+    else:
+        print("ELKS")
+
+
+def cmd_hostname(args):
+    print(hostname)
+
+
+def cmd_whoami(args):
+    print(username)
+
+
+def cmd_date(args):
+    print(datetime.now().strftime("%a %b %d %H:%M:%S %Y"))
+
+
+def cmd_uptime(args):
+    print(f"up {uptime_seconds} seconds")
+
+
+def cmd_free(args):
+    print("              total       used       free")
+    print("Memory:       640K        128K       512K")
+
+
+def cmd_ps(args):
+    print("PID  TTY  STAT  COMMAND")
+    print("  1  -    S     init")
+    print("  2  -    S     [kflush]")
+    print("  3  -    S     /bin/sh")
+
+
+KERNEL_MESSAGES = [
+    "ELKS kernel booting",
+    "CPU: 8086 compatible",
+    "Memory: 640 KB conventional memory",
+    "Kernel: initializing",
+    "VFS: mounting root filesystem",
+    "init: starting system",
+]
+
+
+def cmd_dmesg(args):
+    for message in KERNEL_MESSAGES:
+        print(f"[    0.000] {message}")
+
+
+def cmd_clear(args):
+    clear_screen()
+
+
+def cmd_reboot(args):
+    clear_screen()
+    boot()
+    cmd_help([])
+
+
+def cmd_exit(args):
+    print("Shell terminated.")
+    command_input.disabled = True
+
+
+COMMANDS = {
+    "help": cmd_help,
+    "ls": cmd_ls,
+    "cd": cmd_cd,
+    "pwd": cmd_pwd,
+    "cat": cmd_cat,
+    "mkdir": cmd_mkdir,
+    "touch": cmd_touch,
+    "echo": cmd_echo,
+    "uname": cmd_uname,
+    "hostname": cmd_hostname,
+    "whoami": cmd_whoami,
+    "date": cmd_date,
+    "uptime": cmd_uptime,
+    "free": cmd_free,
+    "ps": cmd_ps,
+    "dmesg": cmd_dmesg,
+    "clear": cmd_clear,
+    "reboot": cmd_reboot,
+    "exit": cmd_exit,
+}
 
 
 # ============================================================
-# LOGIN / BOOT
+# shell
 # ============================================================
 
-def main():
+def prompt():
+    return f"{username}@{hostname}:{cwd}# "
 
-    while True:
-        system = ELKS()
 
-        system.kernel.boot()
+def execute(command):
+    command = command.strip()
 
-        print()
-        print(system.fs.read("/etc/issue"), end="")
+    if not command:
+        return
 
-        print("elks login: ", end="", flush=True)
+    try:
+        parts = shlex.split(command)
+    except ValueError as error:
+        print(f"sh: {error}")
+        return
 
+    name = parts[0]
+    args = parts[1:]
+
+    if name in COMMANDS:
         try:
-            username = input().strip()
-        except (EOFError, KeyboardInterrupt):
-            break
+            COMMANDS[name](args)
+        except Exception as error:
+            print(f"{name}: internal error: {error}")
 
-        if username not in ("root", "toor", "user"):
-            print("Login incorrect")
-            continue
-
-        system.user = "root" if username == "root" else username
-        system.uid = 0 if username in ("root", "toor") else 1000
-
-        if username == "toor":
-            system.shell = "/bin/sash"
-
-        print()
-        print(system.fs.read("/etc/motd"))
-        print()
-
-        system.kernel.add_process(
-            "-" + system.shell,
-            system.user,
-            "1"
-        )
-
-        while system.running:
-            try:
-                command = input(system.prompt())
-                system.execute(command)
-
-            except KeyboardInterrupt:
-                print("^C")
-
-            except EOFError:
-                system.running = False
-
-        if not system.reboot_requested:
-            break
+    else:
+        print(f"sh: {name}: command not found")
 
 
-main()
+def on_keydown(event):
+    if event.key != "Enter":
+        return
+
+    command = command_input.value
+    command_input.value = ""
+
+    print(prompt() + command)
+
+    if command.strip():
+        command_history.append(command)
+
+    execute(command)
+
+    command_input.focus()
+
+
+# Keep the proxy alive for as long as the page is running.
+keydown_proxy = create_proxy(on_keydown)
+command_input.addEventListener("keydown", keydown_proxy)
+
+
+# ============================================================
+# startup
+# ============================================================
+
+boot()
+print("Type 'help' for available commands.")
+print()
+
+command_input.focus()
