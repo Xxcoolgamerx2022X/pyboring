@@ -360,16 +360,24 @@ def run_command(command_line):
     return True
 
 
-while True:
-    try:
-        command = input("web $ ")
-        if not run_command(command):
+async def main():
+    """Run the terminal loop with PyScript's asynchronous worker input."""
+    while True:
+        try:
+            # In a PyScript worker, input() returns a PyodideFuture. Await it
+            # before using the entered text or the loop will print that object
+            # and immediately request input again.
+            command = await input("web $ ")
+            if not run_command(command):
+                break
+        except EOFError:
+            print("Terminal input is unavailable. Reload the page and keep this tab in focus.")
             break
-    except EOFError:
-        print("Terminal input is unavailable. Reload the page and keep this tab in focus.")
-        break
-    except KeyboardInterrupt:
-        print("\nUse 'exit' to leave the shell.")
-    except Exception as error:
-        # Keep a bad diagnostic command from terminating the interactive shell.
-        print("shell error: {}".format(error))
+        except KeyboardInterrupt:
+            print("\nUse 'exit' to leave the shell.")
+        except Exception as error:
+            # Keep a bad diagnostic command from terminating the interactive shell.
+            print("shell error: {}".format(error))
+
+
+await main()
