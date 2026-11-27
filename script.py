@@ -1,4 +1,4 @@
-print("pyscript.net is UP: Hosted on 'https://xxcoolgamerx2022x.github.io/pyboring/' (all rights reserved), entering main()")
+print("pyscript.net is UP: Hosted on 'https://xxcoolgamerx2022x.github.io/pyboring/' (all rights reserved)\n entering main()")
 
 def catch_exit(e):
   print(f"Main returned with {e}")
