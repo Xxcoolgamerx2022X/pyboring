@@ -5,16 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PyScript Terminal</title>
     
-    <!-- PyScript CSS & JS -->
-    <link rel="stylesheet" href="https://pyscript.net">
-    <script type="module" src="https://pyscript.net"></script>
+    <!-- Updated PyScript CSS & JS release URLs -->
+    <link rel="stylesheet" href="https://pyscript.net/releases/2026.7.2/core.css" />
+    <script type="module" src="https://pyscript.net/releases/2026.7.2/core.js"></script>
 </head>
 <body>
-
-    <h1>Interactive Python Terminal</h1>
-
-    <!-- 'terminal' shows stdout/stdin on the page; 'worker' allows input() to pause safely -->
+    <p1>HOST v1 - [WAIT] starting up on pyscript.net...</p1>
+    
+    <!-- 'terminal' renders xterm.js on the page; 'worker' allows input() to block safely -->
     <script type="py" src="./script.py" terminal worker></script>
-
 </body>
 </html>
