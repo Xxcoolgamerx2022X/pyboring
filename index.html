@@ -1,24 +1,20 @@
-
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>ELKS 8086</title>
-
-    <link rel="stylesheet"
-          href="https://pyscript.net/releases/2025.8.1/core.css">
-
-    <script type="module"
-            src="https://pyscript.net/releases/2025.8.1/core.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PyScript Terminal</title>
+    
+    <!-- PyScript CSS & JS -->
+    <link rel="stylesheet" href="https://pyscript.net">
+    <script type="module" src="https://pyscript.net"></script>
 </head>
 <body>
-    <div id="terminal"></div>
 
-    <div id="shell">
-        <span id="prompt"></span>
-        <input id="command" autocomplete="off" autofocus>
-    </div>
+    <h1>Interactive Python Terminal</h1>
 
-    <script type="py" src="script.py"></script>
+    <!-- 'terminal' shows stdout/stdin on the page; 'worker' allows input() to pause safely -->
+    <script type="py" src="./script.py" terminal worker></script>
+
 </body>
 </html>
