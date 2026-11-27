@@ -1,11 +1,24 @@
+
 <!DOCTYPE html>
 <html>
 <head>
-    <title>ELKS</title>
-    <link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
-    <script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
+    <meta charset="UTF-8">
+    <title>ELKS 8086</title>
+
+    <link rel="stylesheet"
+          href="https://pyscript.net/releases/2025.8.1/core.css">
+
+    <script type="module"
+            src="https://pyscript.net/releases/2025.8.1/core.js"></script>
 </head>
 <body>
-    <script type="py" src="script.py"></script>
+    <div id="terminal"></div>
+
+    <div id="shell">
+        <span id="prompt"></span>
+        <input id="command" autocomplete="off" autofocus>
+    </div>
+
+    <script type="py" src="main.py"></script>
 </body>
 </html>
