@@ -1,4 +1,4 @@
-print("PyBoring web diagnostics shell — running in the PyScript page")
+print("pyscript.net is UP: Hosted on 'https://xxcoolgamerx2022x.github.io/pyboring/' (all rights reserved)")
 print("Type 'help' to see browser and runtime diagnostics.")
 
 """A small read-only diagnostics shell for the PyScript-hosted web page.
