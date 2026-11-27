@@ -2,6 +2,6 @@ print("pyscript.net is UP: Hosted on 'https://xxcoolgamerx2022x.github.io/pybori
 print("You are in a TEST TERMINAL")
 while True:
   try:
-    print(eval(input(">$"))) 
+    print(exec(input(">$"))) 
   except Exception as e:
     print(e)
